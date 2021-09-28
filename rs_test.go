@@ -1,11 +1,41 @@
-package main
+// +build ignore
+
+package securityorganizer
 
 import (
 	"fmt"
 	"net"
+	"testing"
 
-	"jiho-dev.com/range-split/iputil"
+	"github.com/cloud-pi/kraken/pkg/iputil"
+	"github.com/cloud-pi/kraken/pkg/log"
+	spclog "github.com/cloud-pi/spc-sdk-go/pkg/common/log"
+	easy "github.com/t-tomalak/logrus-easy-formatter"
 )
+
+func TestRangeSplit(t *testing.T) {
+	cfg := spclog.DefaultConfig()
+	cfg.Level = "debug"
+	cfg.Verbose = false
+	cfg.Formatter = &easy.Formatter{
+		TimestampFormat: "2006-01-02 15:04:05",
+		LogFormat:       "%msg%\n",
+		//LogFormat:       "[%lvl%]: %time% - %msg%\n",
+	}
+
+	l := spclog.New(cfg)
+	log.SetLogger(l)
+
+	t.Log("Begin RangeSplit Test...")
+
+	test1()
+	test2()
+	test3()
+	test4()
+	test5()
+
+	t.Log("Finished RangeSplit Test")
+}
 
 func test1() {
 	/*
@@ -78,10 +108,11 @@ func test2() {
 }
 
 func test3() {
+
 	/*
-		80....80: 1
-		8080..8080: 2
-		8090..8090: 3
+	   80....80  : 1
+	   8080..8080: 2
+	   8090..8090: 3
 	*/
 
 	var rs RangeSplit
@@ -90,27 +121,21 @@ func test3() {
 
 	rs.AddRange(80, 80, 1, []uint64{1})
 	rs.AddRange(8080, 8080, 2, []uint64{2})
-	rs.AddRange(8090, 8090, 3, []uint64{3})
+	rs.AddRange(8090, 8090, 3, []uint64{2})
 
 	rs.Build()
 	rs.DumpIntervals("Done")
 }
 
 func test4() {
-	/*
-		80....80: 1
-		8000..8079: 3
-		8080..8080: 2, 3
-		8081..9000: 3
-	*/
-
 	var rs RangeSplit
 
 	rs.Init()
 
 	rs.AddRange(80, 80, 1, []uint64{1})
 	rs.AddRange(8080, 8080, 2, []uint64{2})
-	rs.AddRange(8000, 9000, 3, []uint64{3})
+	rs.AddRange(8090, 8090, 3, []uint64{2})
+	rs.AddRange(8000, 9000, 4, []uint64{3})
 
 	rs.Build()
 	rs.DumpIntervals("Done")
@@ -138,13 +163,4 @@ func test5() {
 
 	rs.Build()
 	rs.DumpIntervals("Done")
-}
-
-func main() {
-	test1()
-	test2()
-	test3()
-	test4()
-	test5()
-
 }

@@ -3,46 +3,72 @@ package main
 import (
 	"fmt"
 	"sort"
+
+	"jiho-dev.com/range-split/iputil"
+	"jiho-dev.com/range-split/set"
 )
+
+/*
+* Range can be represented by StartSpot and EndSpot
+* Spots: a pair of spots representing a range
+	-. type: start/end/dot
+	-. pos: position
+	-. data: user defined data
+* Stack: remaining spots
+* startPos: a start position of a new interval
+* curPos: current position
+* for all spots:
+	curSpots = getNextSpots()
+	curPos = curSpot[0].Pos
+	if curSpots have StartSopt
+		Close the previous interval if Stack is not empty and startPos < curPos
+			addInterval(startPos, curPos -1)
+		startPos = curPos
+	PushStack(curSpots)
+	if curSpots have EndSpot
+		Close the previous interval if Stack is not empty
+			addInterval(startPos, curPos)
+		startPos = curPos + 1
+	Remove the closed Spots in the Stack, which means if Start/EndSpot are in the Stack
+*/
 
 ////////////////////////////////////
 
 const (
-	None SpotType = iota
-	Start
-	End
-	Mixed
+	SpotStart SpotType = 0x00000001
+	SpotEnd   SpotType = 0x00000002
 )
 
-////////////////////////////////////
-
-type Uint64Slice []uint64
+///////////////////////////
 type Interval struct {
-	Low    int64
-	High   int64
-	NodeId uint64
-	Data   Uint64Slice
+	Low     int64
+	High    int64
+	NodeIds set.Uint64Set
+	Data    set.Uint64Set
 }
+
 type IntervalList []*Interval
-type SpotType int
+
+///////////////////////////
+type SpotType uint32
 type Spot struct {
 	Type   SpotType
 	Pos    int64
 	NodeId uint64
-	Data   Uint64Slice
+	Data   set.Uint64Set // XXX: only for StartSpot
 }
-type SpotList []*Spot
 
-type SpotMap map[int64]*Spot
-type CurrentData map[uint64]bool
+type SpotList []*Spot
+type SpotDataMap map[uint64]set.Uint64Set
+type SpotMap map[uint64]bool // key: Spot.NodeId, val: bool
+
+///////////////////////////
 
 type RangeSplit struct {
-	Intervals    IntervalList
-	Spots        SpotList
-	StartPos     int64
-	CurrentPos   int64
-	CurrentSpots SpotList
-	CurrentData  CurrentData
+	Intervals IntervalList
+	Spots     SpotList
+	Stack     SpotList
+	StartPos  int64
 }
 
 ////////////////////////////////
@@ -50,10 +76,6 @@ type RangeSplit struct {
 func (il IntervalList) Swap(i, j int)      { il[i], il[j] = il[j], il[i] }
 func (il IntervalList) Len() int           { return len(il) }
 func (il IntervalList) Less(i, j int) bool { return il[i].Low < il[j].Low }
-
-func (p Uint64Slice) Len() int           { return len(p) }
-func (p Uint64Slice) Less(i, j int) bool { return p[i] < p[j] }
-func (p Uint64Slice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
 
 func (sl SpotList) Swap(i, j int) { sl[i], sl[j] = sl[j], sl[i] }
 func (sl SpotList) Len() int      { return len(sl) }
@@ -70,205 +92,211 @@ func (sl SpotList) Less(i, j int) bool {
 //////////////////////////////
 
 func (itv *Interval) String() string {
-	sort.Sort(itv.Data)
-	return fmt.Sprintf("Interval: range:%d-%d, id:%d, data:%v", itv.Low, itv.High, itv.NodeId, itv.Data)
+	sort.Sort(itv.NodeIds)
+	return fmt.Sprintf("Interval: range:%d-%d, IDs:%v, data:%v", itv.Low, itv.High, itv.NodeIds, itv.Data)
 }
 
 func (st SpotType) String() string {
-	return []string{"None", "Start", "End", "Mixed"}[st]
+	return []string{"None", "StartSpot", "EndSpot", "MixedSpot"}[st]
 }
 
 func (s *Spot) String() string {
-	sort.Sort(s.Data)
-	return fmt.Sprintf("Spot: pos:%d, type:%s, id:%d, data:%v", s.Pos, s.Type, s.NodeId, s.Data)
+	return fmt.Sprintf("<Spot: pos:%d, type:%s, id:%d, data:%v>", s.Pos, s.Type, s.NodeId, s.Data)
 }
 
-/*
-func (s *Spot) PutData(d uint64) {
-	for _, dd := range s.Data {
-		if dd == d {
-			return
-		}
-	}
+////////////////////////////////
 
-	s.Data = append(s.Data, d)
-}
-*/
-
-/*
-func (sl *SpotList) GetData(limit int64) Uint64Slice {
-	ids := make(Uint64Slice, 0)
+func (sl *SpotList) GetNodeId() set.Uint64Set {
+	ids := make(set.Uint64Set, 0)
 
 	for _, sp := range *sl {
-		if sp.Pos < limit && sp.Type == Start {
-			ids = append(ids, sp.Data...)
-		}
-	}
-
-	return ids
-}
-*/
-
-func (sl *SpotList) GetSpotType() SpotType {
-	var t SpotType = None
-
-	for _, sp := range *sl {
-		if t == None {
-			t = sp.Type
-		} else if t != sp.Type {
-			return Mixed
-		}
-	}
-
-	return t
-}
-
-func (sl *SpotList) GetAllData(t SpotType) Uint64Slice {
-	ids := make(Uint64Slice, 0)
-
-	for _, sp := range *sl {
-		if t == None || sp.Type == t {
-			ids = append(ids, sp.Data...)
-		}
+		ids = ids.Add(sp.NodeId)
 	}
 
 	return ids
 }
 
-func (sl *SpotList) Push(sp *Spot) {
-	*sl = append(*sl, sp)
-}
+func (sl *SpotList) GetNodeData() set.Uint64Set {
+	data := make(set.Uint64Set, 0)
 
-/*
-func (sl *SpotList) IsEmpty() bool {
-	if len(*sl) == 0 {
-		return true
-	}
-
-	return false
-}
-*/
-
-/*
-func (sl *SpotList) Remove(t SpotType) {
-	ids := make([]uint64, 0)
-
-	for _, sp := range rs.CurrentSpots {
-		if sp.Type == End {
-			ids = append(ids, sp.NodeId)
-		}
-	}
-
-	for _, id := range ids {
-		for i := 0; i < len(rs.CurrentSpots); i++ {
-			if rs.CurrentSpots[i].NodeId == id {
-				rs.CurrentSpots = append(rs.CurrentSpots[:i], rs.CurrentSpots[i+1:]...)
-				i--
-			}
-		}
-	}
-}
-*/
-
-func NewInterval(low, high int64, nodeId uint64, data []uint64) *Interval {
-	return &Interval{
-		Low:    low,
-		High:   high,
-		NodeId: nodeId,
-		Data:   data,
-	}
-}
-
-func NewSpot(low, high int64, nodeId uint64, data []uint64) (start, end *Spot) {
-	start = &Spot{
-		Type:   Start,
-		Pos:    low,
-		NodeId: nodeId,
-		Data:   make(Uint64Slice, 0),
-	}
-	start.Data = append(start.Data, data...)
-
-	end = &Spot{
-		Type:   End,
-		Pos:    high,
-		NodeId: nodeId,
-		Data:   make(Uint64Slice, 0),
-	}
-	end.Data = append(end.Data, data...)
-
-	return start, end
-}
-
-func (rs *RangeSplit) AddRange(low, high int64, nodeId uint64, data []uint64) {
-	s, e := NewSpot(low, high, nodeId, data)
-
-	rs.Spots = append(rs.Spots, s, e)
-}
-
-func (rs *RangeSplit) PushInterval(itv *Interval) {
-	rs.Intervals = append(rs.Intervals, itv)
-}
-
-func (rs *RangeSplit) PushCurrentData(t SpotType) {
-	data := rs.CurrentSpots.GetAllData(t)
-	if len(data) < 1 {
-		return
-	}
-
-	for _, d := range data {
-		rs.CurrentData[d] = true
-	}
-}
-
-func (rs *RangeSplit) GetCurrentData() Uint64Slice {
-	data := make(Uint64Slice, 0)
-
-	for d, _ := range rs.CurrentData {
-		data = append(data, d)
+	for _, sp := range *sl {
+		data = data.Add(sp.Data...)
 	}
 
 	return data
 }
 
-func (rs *RangeSplit) RemoveCurrentData() {
-	for _, sp := range rs.CurrentSpots {
-		if sp.Type != End {
-			continue
-		}
+func (sl *SpotList) GetEndSpotId() SpotMap {
+	end := SpotMap{}
 
-		for _, d := range sp.Data {
-			delete(rs.CurrentData, d)
+	for _, sp := range *sl {
+		if (sp.Type & SpotEnd) == SpotEnd {
+			end[sp.NodeId] = true
 		}
+	}
+
+	return end
+}
+
+func (sl *SpotList) Push(sp []*Spot) {
+	*sl = append(*sl, sp...)
+}
+
+////////////////////////////////
+
+func NewInterval(low, high int64, ids set.Uint64Set) *Interval {
+	return &Interval{
+		Low:     low,
+		High:    high,
+		NodeIds: ids,
 	}
 }
 
-func (rs *RangeSplit) CleanCurrentSpots() {
-	rs.CurrentSpots = make(SpotList, 0)
+func NewSpot(low, high int64, nodeId uint64) (start, end *Spot) {
+	start = &Spot{
+		Type:   SpotStart,
+		Pos:    low,
+		NodeId: nodeId,
+	}
+
+	end = &Spot{
+		Type:   SpotEnd,
+		Pos:    high,
+		NodeId: nodeId,
+	}
+
+	return start, end
 }
+
+////////////////////////////////
+
+func (rs *RangeSplit) pushInterval(itv *Interval) {
+	rs.Intervals = append(rs.Intervals, itv)
+}
+
+// return all spots placed in the same position
+// SpotList: list of spot in the same pos
+// SpotType: type of SpotList
+// nextIdx: next index of slice
+func (rs *RangeSplit) getNextSpots(idx int) (SpotList, SpotType, int) {
+	var pos int64 = -1
+	var i int
+	var spType SpotType
+	var cnt = len(rs.Spots)
+
+	if idx >= cnt {
+		return nil, 0, -1
+	}
+
+	curSpots := SpotList{}
+
+	for i = idx; i < cnt; i++ {
+		sp := rs.Spots[i]
+
+		if pos != -1 && pos != sp.Pos {
+			break
+		}
+
+		pos = sp.Pos
+		curSpots = append(curSpots, sp)
+		spType |= sp.Type
+	}
+
+	return curSpots, spType, i
+}
+
+func (rs *RangeSplit) addInterval(end int64) {
+	ids := rs.Stack.GetNodeId()
+	data := rs.Stack.GetNodeData()
+	if len(ids) < 1 {
+		return
+	}
+
+	itv := NewInterval(rs.StartPos, end, ids)
+	itv.Data = data
+
+	sort.Sort(itv.Data)
+	rs.pushInterval(itv)
+}
+
+func (rs *RangeSplit) removeClosedSpot() {
+	remain := SpotList{}
+	end := rs.Stack.GetEndSpotId()
+
+	for _, sp := range rs.Stack {
+		_, ok := end[sp.NodeId]
+		if !ok {
+			remain = append(remain, sp)
+		}
+	}
+
+	rs.Stack = remain
+}
+
+//////////////////////////////////////
+// external function
 
 func (rs *RangeSplit) Init() {
-	rs.CurrentPos = -1
 	rs.StartPos = -1
-
-	rs.CurrentSpots = make(SpotList, 0)
+	rs.Stack = make(SpotList, 0)
 	rs.Intervals = make(IntervalList, 0)
-	rs.CurrentData = make(CurrentData, 0)
 }
 
-func (rs *RangeSplit) AddInterval(end int64) {
-	data := rs.GetCurrentData()
+func (rs *RangeSplit) AddRange(low, high int64, nodeId uint64, data []uint64) {
+	s, e := NewSpot(low, high, nodeId)
+	// XXX: StartSpot only has data
+	s.Data = data
 
-	if len(data) > 0 {
-		itv := NewInterval(rs.StartPos, end, 0, data)
-		rs.PushInterval(itv)
+	rs.Spots = append(rs.Spots, s, e)
+}
+
+func (rs *RangeSplit) Build() {
+	var nextIdx int = 0
+	var curSpots SpotList
+	var spType SpotType
+	var curPos int64
+
+	// first: position
+	// second: Type. Start is the first
+	sort.Sort(rs.Spots)
+
+	for {
+		// Get all Spots placed in the same position
+		curSpots, spType, nextIdx = rs.getNextSpots(nextIdx)
+		if curSpots == nil || len(curSpots) < 1 {
+			break
+		}
+
+		curPos = curSpots[0].Pos
+
+		// exist StartSpot
+		if (spType & SpotStart) == SpotStart {
+			if len(rs.Stack) > 0 && rs.StartPos < curPos {
+				rs.addInterval(curPos - 1)
+			}
+
+			rs.StartPos = curPos
+		}
+
+		rs.Stack.Push(curSpots)
+
+		//exist EndSpot
+		if (spType & SpotEnd) == SpotEnd {
+			if len(rs.Stack) > 0 {
+				rs.addInterval(curPos)
+			}
+
+			rs.removeClosedSpot()
+			rs.StartPos = curPos + 1
+		}
 	}
 }
 
 func (rs *RangeSplit) Dump(msg string) {
-	fmt.Printf("###>> Dump: %s\n", msg)
-	fmt.Printf("Pos: Start=%d, Current=%d\n", rs.StartPos, rs.CurrentPos)
+	fmt.Printf(">>> RangeSplit Dump: %s\n", msg)
+	fmt.Printf("Pos: StartSpot=%d \n", rs.StartPos)
 
-	for i, sp := range rs.CurrentSpots {
+	for i, sp := range rs.Stack {
 		fmt.Printf("%d: %s \n", i, sp)
 	}
 
@@ -276,111 +304,37 @@ func (rs *RangeSplit) Dump(msg string) {
 		fmt.Printf("%d: %s \n", i, itv)
 	}
 
-	data := rs.GetCurrentData()
-	sort.Sort(data)
-	fmt.Printf("AllData: %v \n", data)
-
-	fmt.Printf("<<###\n")
+	fmt.Printf("<<<\n")
 }
 
 func (rs *RangeSplit) DumpAllSpots() {
-	fmt.Printf("=== dump === \n")
+	fmt.Printf(">>> RangeSplit Spot Dump \n")
 
 	fmt.Printf("All Spots \n")
 	for i, sp := range rs.Spots {
 		fmt.Printf("%d: %s \n", i, sp)
 	}
+
+	fmt.Printf("<<<\n")
 }
 
 func (rs *RangeSplit) DumpIntervals(msg string) {
-	fmt.Printf("###>> Dump: %s\n", msg)
+	fmt.Printf(">>> RangeSplit Interval Dump: %s\n", msg)
 
 	for i, itv := range rs.Intervals {
 		fmt.Printf("%d: %s \n", i, itv)
 	}
 
-	fmt.Printf("<<###\n")
+	fmt.Printf("<<<\n")
 }
 
-func (rs *RangeSplit) CreateInterval(pos int64) {
-	t := rs.CurrentSpots.GetSpotType()
+func (rs *RangeSplit) DumpIpIntervals(msg string) {
+	fmt.Printf(">>> RangeSplit IP Interval Dump: %s\n", msg)
 
-	if t == Mixed {
-		//fmt.Printf("  ==> Begin Mixed: Pos=%d \n", pos)
-		//rs.Dump("Begin Mxied")
-
-		if len(rs.CurrentData) > 0 && rs.StartPos < rs.CurrentPos {
-			// clsoing the previous interval
-			rs.AddInterval(rs.CurrentPos - 1)
-			rs.StartPos = rs.CurrentPos
-		}
-
-		// closing a dot
-		rs.PushCurrentData(Start)
-		rs.AddInterval(rs.CurrentPos)
-
-		rs.RemoveCurrentData()
-		rs.CleanCurrentSpots()
-
-		rs.StartPos++
-		rs.CurrentPos = pos
-	} else if t == Start {
-		//fmt.Printf("  ==> Begin Start: Pos=%d \n", pos)
-		//rs.Dump("Begin Start")
-
-		if len(rs.CurrentData) > 0 && rs.StartPos < rs.CurrentPos {
-			// closing the previous interval
-			rs.AddInterval(rs.CurrentPos - 1)
-		}
-
-		rs.PushCurrentData(None)
-
-		rs.CleanCurrentSpots()
-
-		rs.StartPos = rs.CurrentPos
-		rs.CurrentPos = pos
-	} else if t == End {
-		//fmt.Printf("  ==> Begin End: Pos=%d \n", pos)
-		//rs.Dump("Begin End")
-
-		if len(rs.CurrentData) > 0 {
-			end := rs.CurrentSpots[0].Pos
-			rs.AddInterval(end)
-		}
-
-		rs.RemoveCurrentData()
-		rs.CleanCurrentSpots()
-
-		rs.StartPos = rs.CurrentPos + 1
-		rs.CurrentPos = pos
-	} else {
-		fmt.Printf("############### Unknown Type: %v \n", t)
+	for i, itv := range rs.Intervals {
+		fmt.Printf("%d: %s - %s, data:%v \n", i,
+			iputil.Int2ip(uint32(itv.Low)), iputil.Int2ip(uint32(itv.High)), itv.Data)
 	}
 
-}
-
-func (rs *RangeSplit) Build() {
-	sort.Sort(rs.Spots)
-	rs.DumpAllSpots()
-
-	for _, sp := range rs.Spots {
-		if rs.StartPos == -1 {
-			// the first time
-			rs.CurrentPos = sp.Pos
-			rs.StartPos = sp.Pos
-			rs.CurrentSpots.Push(sp)
-		} else if rs.CurrentPos == sp.Pos {
-			rs.CurrentPos = sp.Pos
-			rs.CurrentSpots.Push(sp)
-		} else {
-			rs.CreateInterval(sp.Pos)
-			rs.CurrentSpots.Push(sp)
-		}
-	}
-
-	if len(rs.CurrentSpots) > 0 {
-		rs.CreateInterval(-1)
-	}
-
-	rs.DumpIntervals("Done")
+	fmt.Printf("<<<\n")
 }
