@@ -1,6 +1,6 @@
 package main
 
-func main() {
+func test1() {
 	/*
 	    012345678901234567890123456789
 	   1   3.....9
@@ -25,7 +25,6 @@ func main() {
 	   20..21: 2,5,7
 	   22..25: 2,7
 	   26..29: 7
-
 	*/
 
 	var rs RangeSplit
@@ -43,4 +42,54 @@ func main() {
 	rs.AddRange(6, 6, 9, []uint64{9})
 
 	rs.Build()
+}
+
+func test2() {
+	/*
+	    012345678901234567890123456789
+	   1          0
+	   2                6
+	   3             3.....9
+
+	   10..10: 1
+	   13..15: 3
+	   16..16: 2,3
+	   17..19: 3
+	*/
+
+	var rs RangeSplit
+
+	rs.Init()
+
+	rs.AddRange(10, 10, 1, []uint64{1})
+	rs.AddRange(16, 16, 2, []uint64{2})
+	rs.AddRange(13, 19, 3, []uint64{3})
+
+	rs.Build()
+}
+
+func test3() {
+	/*
+		80....80: 1
+		8000..8079: 3
+		8080..8080: 2, 3
+		8081..9000: 3
+	*/
+
+	var rs RangeSplit
+
+	rs.Init()
+
+	rs.AddRange(80, 80, 1, []uint64{1})
+	rs.AddRange(8080, 8080, 2, []uint64{2})
+	rs.AddRange(8000, 9000, 3, []uint64{3})
+
+	rs.Build()
+}
+
+func main() {
+	test1()
+	test2()
+	test3()
+
 }
