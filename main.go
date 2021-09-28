@@ -42,6 +42,7 @@ func test1() {
 	rs.AddRange(6, 6, 9, []uint64{9})
 
 	rs.Build()
+	rs.DumpIntervals("Done")
 }
 
 func test2() {
@@ -66,9 +67,29 @@ func test2() {
 	rs.AddRange(13, 19, 3, []uint64{3})
 
 	rs.Build()
+	rs.DumpIntervals("Done")
 }
 
 func test3() {
+	/*
+		80....80: 1
+		8080..8080: 2
+		8090..8090: 3
+	*/
+
+	var rs RangeSplit
+
+	rs.Init()
+
+	rs.AddRange(80, 80, 1, []uint64{1})
+	rs.AddRange(8080, 8080, 2, []uint64{2})
+	rs.AddRange(8090, 8090, 3, []uint64{3})
+
+	rs.Build()
+	rs.DumpIntervals("Done")
+}
+
+func test4() {
 	/*
 		80....80: 1
 		8000..8079: 3
@@ -85,11 +106,13 @@ func test3() {
 	rs.AddRange(8000, 9000, 3, []uint64{3})
 
 	rs.Build()
+	rs.DumpIntervals("Done")
 }
 
 func main() {
 	test1()
 	test2()
 	test3()
+	test4()
 
 }
