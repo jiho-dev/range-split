@@ -33,13 +33,6 @@ import (
 */
 
 ////////////////////////////////////
-
-const (
-	SpotStart SpotType = 0x00000001
-	SpotEnd   SpotType = 0x00000002
-)
-
-///////////////////////////
 type Interval struct {
 	Low     int64
 	High    int64
@@ -50,7 +43,14 @@ type Interval struct {
 type IntervalList []*Interval
 
 ///////////////////////////
+
 type SpotType uint32
+
+const (
+	SpotStart SpotType = 0x00000001
+	SpotEnd   SpotType = 0x00000002
+)
+
 type Spot struct {
 	Type   SpotType
 	Pos    int64
@@ -59,15 +59,14 @@ type Spot struct {
 }
 
 type SpotList []*Spot
-type SpotDataMap map[uint64]set.Uint64Set
 type SpotMap map[uint64]bool // key: Spot.NodeId, val: bool
 
 ///////////////////////////
 
 type RangeSplit struct {
 	Intervals IntervalList
-	Spots     SpotList
-	Stack     SpotList
+	Spots     SpotList // all spots being treated
+	Stack     SpotList // the ranges alive
 	StartPos  int64
 }
 
@@ -256,21 +255,25 @@ func (rs *RangeSplit) Build() {
 	var spType SpotType
 	var curPos int64
 
-	// first: position
-	// second: Type. Start is the first
+	// the first key : position
+	// the second key: Type. Start is the first
 	sort.Sort(rs.Spots)
 
 	for {
 		// Get all Spots placed in the same position
 		curSpots, spType, nextIdx = rs.getNextSpots(nextIdx)
-		if curSpots == nil || len(curSpots) < 1 {
+		if nextIdx == -1 {
+			// end of data
 			break
+		} else if curSpots == nil || len(curSpots) < 1 {
+			continue
 		}
 
 		curPos = curSpots[0].Pos
 
 		// exist StartSpot
 		if (spType & SpotStart) == SpotStart {
+			// exist remaining range ?
 			if len(rs.Stack) > 0 && rs.StartPos < curPos {
 				rs.addInterval(curPos - 1)
 			}
@@ -284,9 +287,9 @@ func (rs *RangeSplit) Build() {
 		if (spType & SpotEnd) == SpotEnd {
 			if len(rs.Stack) > 0 {
 				rs.addInterval(curPos)
+				rs.removeClosedSpot()
 			}
 
-			rs.removeClosedSpot()
 			rs.StartPos = curPos + 1
 		}
 	}
